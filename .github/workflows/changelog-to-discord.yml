@@ -1,0 +1,51 @@
+name: Changelog → Discord
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'CHANGELOG.md'
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract latest changelog section
+        run: |
+          awk 'BEGIN{p=0}/^##[[:space:]]/{if(p)exit;p=1} p' CHANGELOG.md > latest.md || true
+          [ -s latest.md ] || tail -n 100 CHANGELOG.md > latest.md
+
+      - name: Build JSON payload
+        run: |
+          python3 - <<'PY'
+          import os, json
+          title = "Changelog Update"
+          desc = ""
+          try:
+              with open("latest.md", "r", encoding="utf-8", errors="ignore") as f:
+                  lines = f.read().splitlines()
+              if lines:
+                  title = (lines[0].lstrip("# ").strip() or title)[:256]
+                  desc  = "\n".join(lines[1:]) if len(lines) > 1 else ""
+          except FileNotFoundError:
+              pass
+          payload = {
+              "embeds": [{
+                  "title": title,
+                  "description": desc[:3800],
+                  "url": f"https://github.com/{os.environ.get('GITHUB_REPOSITORY','')}/commit/{os.environ.get('GITHUB_SHA','')}",
+                  "color": 5763719   # green (#57F287). Use 65280 for #00FF00
+              }]
+          }
+          with open("payload.json", "w", encoding="utf-8") as f:
+              json.dump(payload, f, ensure_ascii=False)
+          PY
+
+      - name: Post to Discord
+        env:
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+        run: |
+          curl -s -H "Content-Type: application/json" \
+               -X POST -d @payload.json "$WEBHOOK_URL"
